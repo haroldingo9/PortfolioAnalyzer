@@ -10,7 +10,16 @@ from datetime import datetime, timedelta
 st.set_page_config(page_title="Portfolio Analyzer", layout="wide")
 st.title("📊 Portfolio Performance Dashboard")
 
-# -------------------- File Download Links --------------------
+# ----------------------------------------
+# 🔒 Disclaimer
+st.markdown("""
+> ⚠️ **Disclaimer**  
+> This tool is for educational purposes only and should not be considered financial advice.  
+> Please consult a certified financial advisor before making investment decisions.
+""", unsafe_allow_html=True)
+
+# ----------------------------------------
+# 📥 File download links
 def file_download_link(file_name, content):
     b64 = base64.b64encode(content.encode()).decode()
     href = f'<a href="data:file/csv;base64,{b64}" download="{file_name}">📄 Download Template: {file_name}</a>'
@@ -36,9 +45,13 @@ price_template = """AAPL,MSFT,GOOGL,TSLA,AMZN
 st.markdown(file_download_link("portfolio_template.csv", portfolio_template), unsafe_allow_html=True)
 st.markdown(file_download_link("monthly_prices_template.csv", price_template), unsafe_allow_html=True)
 
-# -------------------- Upload Portfolio --------------------
+# ----------------------------------------
+# 📤 Upload section
 uploaded_portfolio = st.file_uploader("Upload Portfolio CSV", type=["csv"])
+uploaded_prices = st.file_uploader("Upload Monthly Prices CSV", type=["csv"])
 
+# ----------------------------------------
+# 🧾 Read Portfolio Data
 if uploaded_portfolio is not None:
     df_portfolio = pd.read_csv(uploaded_portfolio)
     try:
@@ -58,44 +71,40 @@ else:
     st.info("Please upload your portfolio CSV file to proceed.")
     st.stop()
 
-# -------------------- Monthly Prices --------------------
-use_auto_data = st.checkbox("📥 Automatically fetch last 6 months closing prices", value=True)
-monthly_prices = {}
+# ----------------------------------------
+# 📈 Read or Fetch Monthly Prices
+monthly_prices = None
 
-if use_auto_data:
-    st.info("Fetching 6 months of monthly closing prices using Yahoo Finance...")
-    end_date = datetime.today()
-    start_date = end_date - timedelta(days=180)
-
-    for stock in portfolio.keys():
-        try:
-            ticker = yf.Ticker(stock)
-            hist = ticker.history(start=start_date, end=end_date, interval="1mo")
-            if hist.empty:
-                st.warning(f"⚠️ No data for {stock}. Skipping.")
-                continue
-            monthly_prices[stock] = hist["Close"].dropna().tolist()
-            st.success(f"✅ Fetched data for {stock}")
-        except Exception as e:
-            st.error(f"❌ Error fetching data for {stock}: {e}")
+if uploaded_prices is not None:
+    try:
+        df_prices = pd.read_csv(uploaded_prices)
+        monthly_prices = {
+            col: df_prices[col].dropna().astype(float).tolist()
+            for col in df_prices.columns
+        }
+        st.success("✅ Monthly prices uploaded successfully!")
+    except Exception as e:
+        st.error(f"Error processing monthly prices CSV: {e}")
 else:
-    uploaded_prices = st.file_uploader("Upload Monthly Prices CSV", type=["csv"])
-    if uploaded_prices is not None:
-        try:
-            df_prices = pd.read_csv(uploaded_prices)
-            monthly_prices = {
-                col: df_prices[col].dropna().astype(float).tolist()
-                for col in df_prices.columns
-            }
-            st.success("✅ Monthly prices uploaded successfully!")
-        except Exception as e:
-            st.error(f"Error processing monthly prices CSV: {e}")
-            monthly_prices = None
-    else:
-        monthly_prices = None
-        st.info("Monthly prices not uploaded. Optimization & risk analysis will be skipped.")
+    st.info("No monthly prices uploaded. Attempting to fetch 6 months of data from Yahoo Finance...")
 
-# -------------------- Investment Overview --------------------
+    try:
+        monthly_prices = {}
+        end = datetime.today()
+        start = end - timedelta(days=180)
+
+        for stock in portfolio.keys():
+            data = yf.download(stock, start=start, end=end, interval="1mo")
+            closes = data["Close"].dropna().tolist()
+            if len(closes) >= 2:
+                monthly_prices[stock] = closes
+        st.success("✅ Successfully pulled 6-month monthly closing prices using yfinance!")
+    except Exception as e:
+        st.error(f"Error fetching prices from yfinance: {e}")
+        monthly_prices = None
+
+# ----------------------------------------
+# 💸 Portfolio Summary
 total_invested = 0
 total_current_value = 0
 returns = {}
@@ -123,14 +132,16 @@ st.markdown(f"**Total Invested:** ₹{total_invested}")
 st.markdown(f"**Total Current Value:** ₹{total_current_value}")
 st.markdown(f"**Portfolio Return:** {total_return:.2f}%")
 
-# -------------------- Profit Contribution --------------------
+# ----------------------------------------
+# 📌 Profit Contribution
 st.subheader("📌 Profit Contribution to Portfolio")
 total_profit = sum(profits.values())
 for stock, profit in profits.items():
     contribution = (profit / total_profit) * 100 if total_profit else 0
     st.markdown(f"{stock}: {contribution:.2f}% of total profit")
 
-# -------------------- Risk Analysis Functions --------------------
+# ----------------------------------------
+# 📉 Risk Metrics
 def max_drawdown(prices):
     peak = prices[0]
     max_dd = 0
@@ -149,7 +160,6 @@ def var_cvar(returns, confidence_level=0.95):
     CVaR = abs(np.mean(sorted_returns[:index + 1]))
     return VaR, CVaR
 
-# -------------------- Risk Metrics --------------------
 risk_free_rate_annual = 6
 risk_free_rate_monthly = risk_free_rate_annual / 12
 sharpe_ratios = {}
@@ -172,7 +182,8 @@ if monthly_prices:
         st.markdown(f"**{stock}** → Volatility: {volatility:.2f}%, Avg Return: {avg_return:.2f}%, Sharpe: {sharpe:.2f}")
         st.markdown(f"&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Max Drawdown: {mdd:.2f}%, VaR(95%): {VaR:.2f}%, CVaR(95%): {CVaR:.2f}%")
 
-# -------------------- Correlation Matrix --------------------
+# ----------------------------------------
+# 📈 Correlation & Optimization
 if monthly_prices:
     returns_df = pd.DataFrame({
         stock: [(monthly_prices[stock][i] - monthly_prices[stock][i - 1]) / monthly_prices[stock][i - 1] * 100
@@ -183,7 +194,7 @@ if monthly_prices:
     st.subheader("📈 Correlation Matrix")
     st.dataframe(returns_df.corr())
 
-# -------------------- Portfolio Optimization --------------------
+# ----------------------------------------
 if monthly_prices and len(portfolio) > 1:
     try:
         expected_returns = returns_df.mean().values / 100
@@ -210,7 +221,8 @@ if monthly_prices and len(portfolio) > 1:
         if opt.success:
             optimized_weights = opt.x
             for i, stock in enumerate(returns_df.columns):
-                st.markdown(f"{stock}: 📊 Optimized Weight = {optimized_weights[i] * 100:.2f}%")
+                optimized_weight = optimized_weights[i] * 100
+                st.markdown(f"{stock}: 📊 Optimized Weight = {optimized_weight:.2f}%")
         else:
             st.error("❌ Optimization Failed. Check if monthly data is consistent.")
     except Exception as e:
@@ -218,11 +230,12 @@ if monthly_prices and len(portfolio) > 1:
 else:
     st.info("Monthly prices data or multiple stocks required for portfolio optimization.")
 
-# -------------------- Sharpe Ratio Rankings --------------------
+# ----------------------------------------
 if sharpe_ratios:
     best = max(sharpe_ratios, key=sharpe_ratios.get)
     worst = min(sharpe_ratios, key=sharpe_ratios.get)
     st.subheader("🏆 Sharpe Ratio Rankings")
     st.markdown(f"**Best Stock:** {best} ({sharpe_ratios[best]:.2f})")
     st.markdown(f"**Worst Stock:** {worst} ({sharpe_ratios[worst]:.2f})")
+
 
